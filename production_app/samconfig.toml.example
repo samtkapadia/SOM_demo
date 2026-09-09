@@ -1,0 +1,7 @@
+# Uncomment after first guided deploy, or just use: sam deploy --guided
+# version = 0.1
+# [default.deploy.parameters]
+# stack_name = "som-demo"
+# region = "ap-southeast-2"
+# capabilities = "CAPABILITY_IAM"
+# confirm_changeset = true

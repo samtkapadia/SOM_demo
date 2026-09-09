@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.Python
+.aws-sam/
+samconfig.toml
+web/config.js
+.env
+credentials-for-panel.txt
+outputs/
+*.pkl
+.DS_Store
+venv/
+.venv/
