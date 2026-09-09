@@ -23,23 +23,25 @@
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
     .muted { color: #555; font-size: 0.9rem; }
     .error { color: #a40000; }
-    /* fixed display size so a 10x10 and a 100x100 map look the same on screen */
-    #map {
+    /* fixed display size so maps with different grid sizes look consistent */
+    #map, #atlasMap {
       width: 100%;
       max-width: 420px;
       height: auto;
       margin-top: 1rem;
       border: 1px solid #ddd;
+    }
+    #map {
       image-rendering: pixelated;
     }
     #app, #login { display: none; }
-    fieldset { border: 1px solid #ddd; margin: 0; padding: 0.75rem 1rem 1rem; }
+    fieldset { border: 1px solid #ddd; margin: 0 0 1.5rem; padding: 0.75rem 1rem 1rem; }
   </style>
   <script src="config.js"></script>
 </head>
 <body>
   <h1>Kohonen self-organising map</h1>
-  <p class="muted">Random RGB points, trained in Lambda. Image stored in S3.</p>
+  <p class="muted">Train a SOM on RGB points or 128-dimensional image embeddings.</p>
 
   <section id="login">
     <h2>Sign in</h2>
@@ -52,7 +54,8 @@
   <section id="app">
     <p class="muted" id="who"></p>
     <fieldset>
-      <legend>Hyperparameters</legend>
+      <legend>Random RGB points</legend>
+      <p class="muted">The original 3-feature example.</p>
       <div class="row">
         <label>Width <input id="width" type="number" value="10" min="3" max="80"></label>
         <label>Height <input id="height" type="number" value="10" min="3" max="80"></label>
@@ -68,6 +71,25 @@
     <p id="status" class="muted"></p>
     <p id="qe"></p>
     <img id="map" alt="SOM RGB map" hidden>
+
+    <fieldset>
+      <legend>CIFAR-10 photo atlas</legend>
+      <p class="muted">
+        A SOM trained on 250 images represented by 128-dimensional ResNet-18 embeddings.
+      </p>
+      <div class="row">
+        <label>Width <input id="atlasWidth" type="number" value="16" min="8" max="20"></label>
+        <label>Height <input id="atlasHeight" type="number" value="16" min="8" max="20"></label>
+        <label>Iterations <input id="atlasIterations" type="number" value="100" min="25" max="150"></label>
+        <label>Seed <input id="atlasSeed" type="number" value="7"></label>
+      </div>
+      <button type="button" id="atlasTrainBtn">Train photo atlas</button>
+    </fieldset>
+    <p class="error" id="atlasError"></p>
+    <p id="atlasStatus" class="muted"></p>
+    <p id="atlasQe"></p>
+    <img id="atlasMap" alt="CIFAR-10 SOM photo atlas" hidden>
+
     <p><button type="button" id="logoutBtn">Log out</button></p>
   </section>
 
@@ -128,6 +150,10 @@
       document.getElementById("status").textContent = "";
       document.getElementById("qe").textContent = "";
       document.getElementById("map").hidden = true;
+      document.getElementById("atlasError").textContent = "";
+      document.getElementById("atlasStatus").textContent = "";
+      document.getElementById("atlasQe").textContent = "";
+      document.getElementById("atlasMap").hidden = true;
       route();
     };
 
@@ -161,6 +187,45 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || JSON.stringify(data));
         status.textContent = `run ${data.run_id}`;
+        qe.textContent = `Quantization error: ${Number(data.quantization_error).toFixed(4)}`;
+        img.src = data.image_url;
+        img.hidden = false;
+      } catch (e) {
+        status.textContent = "";
+        err.textContent = e.message;
+      }
+    };
+
+    document.getElementById("atlasTrainBtn").onclick = async () => {
+      const err = document.getElementById("atlasError");
+      const status = document.getElementById("atlasStatus");
+      const qe = document.getElementById("atlasQe");
+      const img = document.getElementById("atlasMap");
+      err.textContent = "";
+      qe.textContent = "";
+      img.hidden = true;
+      status.textContent = "Training the photo atlas…";
+
+      const body = {
+        width: Number(document.getElementById("atlasWidth").value),
+        height: Number(document.getElementById("atlasHeight").value),
+        n_iter: Number(document.getElementById("atlasIterations").value),
+        seed: Number(document.getElementById("atlasSeed").value),
+      };
+
+      try {
+        const res = await fetch(`${cfg.apiUrl}/train-atlas`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY)}`,
+          },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || JSON.stringify(data));
+        status.textContent =
+          `${data.n_images} images · ${data.embedding_dim}-d · ${data.width}×${data.height} map · ${data.encoder}`;
         qe.textContent = `Quantization error: ${Number(data.quantization_error).toFixed(4)}`;
         img.src = data.image_url;
         img.hidden = false;

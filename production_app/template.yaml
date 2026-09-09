@@ -90,6 +90,7 @@ Resources:
       Environment:
         Variables:
           BUCKET: !Ref ArtifactBucket
+          ATLAS_KEY: atlas/embeddings.npz
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref ArtifactBucket
@@ -99,6 +100,14 @@ Resources:
           Properties:
             ApiId: !Ref HttpApi
             Path: /train
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuth
+        TrainAtlas:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /train-atlas
             Method: POST
             Auth:
               Authorizer: CognitoAuth

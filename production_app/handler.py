@@ -1,14 +1,17 @@
 import json
 import os
 import uuid
+from io import BytesIO
 
 import boto3
 import numpy as np
 
+from kohonen.mosaic import atlas_to_png_bytes
 from kohonen.png import weights_to_png_bytes
 from kohonen.som import SOM
 
 BUCKET = os.environ["BUCKET"]
+ATLAS_KEY = os.environ.get("ATLAS_KEY", "atlas/embeddings.npz")
 LIMITS = {
     "width": (3, 80),
     "height": (3, 80),
@@ -16,8 +19,14 @@ LIMITS = {
     "n_samples": (2, 50),
     "lr0": (1e-4, 1.0),
 }
+ATLAS_LIMITS = {
+    "width": (8, 20),
+    "height": (8, 20),
+    "n_iter": (25, 150),
+}
 
 s3 = boto3.client("s3")
+atlas_data = None
 
 
 def _json_body(event):
@@ -31,8 +40,8 @@ def _json_body(event):
     return json.loads(raw)
 
 
-def _clamp_int(body, key, default):
-    lo, hi = LIMITS[key]
+def _clamp_int(body, key, default, limits=LIMITS):
+    lo, hi = limits[key]
     v = int(body.get(key, default))
     return max(lo, min(hi, v))
 
@@ -57,6 +66,8 @@ def _response(status, payload):
 
 def lambda_handler(event, context):
     try:
+        if event.get("rawPath", "").endswith("/train-atlas"):
+            return _train_atlas(event)
         return _train(event)
     except Exception as e:
         return _response(400, {"message": str(e)})
@@ -103,5 +114,57 @@ def _train(event):
             "lr0": lr0,
             "seed": seed,
             "radius_mask": radius_mask,
+        },
+    )
+
+
+def _load_atlas():
+    global atlas_data
+    if atlas_data is None:
+        obj = s3.get_object(Bucket=BUCKET, Key=ATLAS_KEY)
+        with np.load(BytesIO(obj["Body"].read()), allow_pickle=False) as data:
+            atlas_data = {
+                "X": data["X"],
+                "thumbs": data["thumbs"],
+                "encoder": str(data["encoder"]),
+                "class_names": data["class_names"].tolist(),
+            }
+    return atlas_data
+
+
+def _train_atlas(event):
+    body = _json_body(event)
+    width = _clamp_int(body, "width", 16, ATLAS_LIMITS)
+    height = _clamp_int(body, "height", 16, ATLAS_LIMITS)
+    n_iter = _clamp_int(body, "n_iter", 100, ATLAS_LIMITS)
+    seed = int(body.get("seed", 7))
+
+    data = _load_atlas()
+    X = data["X"]
+    som = SOM(width, height, n_iter, seed=seed).train(X)
+    png = atlas_to_png_bytes(som.weights, X, data["thumbs"])
+
+    run_id = str(uuid.uuid4())
+    key = f"runs/{run_id}/atlas.png"
+    s3.put_object(Bucket=BUCKET, Key=key, Body=png, ContentType="image/png")
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": BUCKET, "Key": key},
+        ExpiresIn=900,
+    )
+
+    return _response(
+        200,
+        {
+            "run_id": run_id,
+            "quantization_error": som.quantization_error(X),
+            "image_url": url,
+            "width": width,
+            "height": height,
+            "n_iter": n_iter,
+            "n_images": len(X),
+            "embedding_dim": X.shape[1],
+            "encoder": data["encoder"],
+            "classes": data["class_names"],
         },
     )
