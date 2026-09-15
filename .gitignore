@@ -2,3 +2,4 @@ improvements_for_production/
 .ipynb_checkpoints/
 .DS_Store
 production_app/README.md
+production_app/tests/

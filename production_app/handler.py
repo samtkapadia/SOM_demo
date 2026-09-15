@@ -1,3 +1,20 @@
+"""
+Lambda that the webpage calls *after* login.
+
+User journey (nothing in this file runs when they only open CloudFront):
+  1. Browser loads index.html + config.js from CloudFront/S3.
+  2. They sign in; the page talks to Cognito and stores a JWT.
+  3. Page POSTs here with Authorization: Bearer <jwt>:
+       login / Randomize RGB   -> POST /init        -> left RGB image
+       Train RGB               -> POST /train       -> right RGB image
+       login / Randomize atlas -> POST /init-atlas  -> left photo mosaic
+       Train photo atlas       -> POST /train-atlas -> right photo mosaic
+  4. Each route builds a PNG, puts it on the artifact S3 bucket, returns a
+     15-minute presigned URL. The <img> tags load that URL (S3, not Lambda).
+
+API Gateway's Cognito JWT authorizer runs before this code.
+"""
+
 import json
 import os
 import uuid
@@ -12,10 +29,11 @@ from kohonen.som import SOM
 
 BUCKET = os.environ["BUCKET"]
 ATLAS_KEY = os.environ.get("ATLAS_KEY", "atlas/embeddings.npz")
+# hard caps so one form submit cannot run a huge job on the shared demo account
 LIMITS = {
-    "width": (3, 80),
-    "height": (3, 80),
-    "n_iter": (1, 400),
+    "width": (3, 100),
+    "height": (3, 100),
+    "n_iter": (1, 1000),
     "n_samples": (2, 50),
     "lr0": (1e-4, 1.0),
 }
@@ -26,10 +44,11 @@ ATLAS_LIMITS = {
 }
 
 s3 = boto3.client("s3")
-atlas_data = None
+atlas_data = None  # filled on first atlas request; kept on warm Lambda environments
 
 
 def _json_body(event):
+    """Turn API Gateway's event['body'] into a dict of form fields (width, seed, …)."""
     raw = event.get("body") or "{}"
     if event.get("isBase64Encoded"):
         import base64
@@ -41,18 +60,21 @@ def _json_body(event):
 
 
 def _clamp_int(body, key, default, limits=LIMITS):
+    """Read an int from the request and clip it into [lo, hi]."""
     lo, hi = limits[key]
     v = int(body.get(key, default))
     return max(lo, min(hi, v))
 
 
 def _clamp_float(body, key, default):
+    """Read a float from the request and clip it into LIMITS[key]."""
     lo, hi = LIMITS[key]
     v = float(body.get(key, default))
     return max(lo, min(hi, v))
 
 
 def _response(status, payload):
+    """JSON back to the browser. CORS * so the CloudFront origin can read it."""
     return {
         "statusCode": status,
         "headers": {
@@ -65,6 +87,11 @@ def _response(status, payload):
 
 
 def lambda_handler(event, context):
+    """
+    Only entry AWS invokes (template.yaml Handler: handler.lambda_handler).
+
+    event['rawPath'] is the HTTP path after API Gateway already checked the JWT.
+    """
     try:
         path = event.get("rawPath", "")
         if path.endswith("/init-atlas"):
@@ -73,12 +100,19 @@ def lambda_handler(event, context):
             return _train_atlas(event)
         if path.endswith("/init"):
             return _init(event)
+        # POST /train, and any unmatched path
         return _train(event)
     except Exception as e:
         return _response(400, {"message": str(e)})
 
 
 def _put_png(png, filename, extra):
+    """
+    Last step of every route: PNG -> artifact bucket -> JSON {image_url, ...}.
+
+    The browser does not get the PNG bytes in this response; it GETs image_url
+    (presigned, 15 min) and that hits S3, not this Lambda.
+    """
     run_id = str(uuid.uuid4())
     key = f"runs/{run_id}/{filename}"
     s3.put_object(Bucket=BUCKET, Key=key, Body=png, ContentType="image/png")
@@ -92,6 +126,13 @@ def _put_png(png, filename, extra):
 
 
 def _train(event):
+    """
+    RGB Train button -> right-hand colour grid.
+
+    Same seed as /init, so this is the organised version of the left-hand map
+    (if they did not change width/height/seed in between). Training data is
+    n_samples random RGB points, not uploaded files.
+    """
     body = _json_body(event)
 
     width = _clamp_int(body, "width", 10)
@@ -126,6 +167,12 @@ def _train(event):
 
 
 def _init(event):
+    """
+    After login, and RGB Randomize -> left-hand colour grid.
+
+    No Kohonen updates: just seed -> random (H, W, 3) weights as RGB.
+    n_iter on the form is ignored here.
+    """
     body = _json_body(event)
     width = _clamp_int(body, "width", 10)
     height = _clamp_int(body, "height", 10)
@@ -143,6 +190,11 @@ def _init(event):
 
 
 def _load_atlas():
+    """
+    CIFAR embeddings + thumbnails from S3 (uploaded earlier by scripts/upload_atlas.py).
+
+    Cached on this Lambda instance so login's /init-atlas and later Train share one download.
+    """
     global atlas_data
     if atlas_data is None:
         obj = s3.get_object(Bucket=BUCKET, Key=ATLAS_KEY)
@@ -157,6 +209,12 @@ def _load_atlas():
 
 
 def _train_atlas(event):
+    """
+    Train photo atlas -> right-hand mosaic.
+
+    Fixed 250 x 128-d embeddings; only grid size / iterations / seed come from the form.
+    Each cell shows the nearest training thumbnail (repeats are expected).
+    """
     body = _json_body(event)
     width = _clamp_int(body, "width", 16, ATLAS_LIMITS)
     height = _clamp_int(body, "height", 16, ATLAS_LIMITS)
@@ -185,6 +243,11 @@ def _train_atlas(event):
 
 
 def _init_atlas(event):
+    """
+    After login, and atlas Randomize -> left-hand mosaic.
+
+    Same nearest-image paste as train, but on random 128-d weights (no updates).
+    """
     body = _json_body(event)
     width = _clamp_int(body, "width", 16, ATLAS_LIMITS)
     height = _clamp_int(body, "height", 16, ATLAS_LIMITS)
