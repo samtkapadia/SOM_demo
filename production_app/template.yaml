@@ -85,6 +85,8 @@ Resources:
   TrainFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Architectures:
+        - arm64
       CodeUri: .
       Handler: handler.lambda_handler
       Environment:
@@ -103,11 +105,27 @@ Resources:
             Method: POST
             Auth:
               Authorizer: CognitoAuth
+        Init:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /init
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuth
         TrainAtlas:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /train-atlas
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuth
+        InitAtlas:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /init-atlas
             Method: POST
             Auth:
               Authorizer: CognitoAuth

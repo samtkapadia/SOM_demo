@@ -39,6 +39,14 @@ class SOM:
         self.radius_mask = radius_mask
         self.weights = None
 
+    def init_weights(self, n_features):
+        """
+        Method to draw the untrained codebook from the seed.
+        """
+        rng = np.random.default_rng(self.seed)
+        self.weights = rng.random((self.height, self.width, int(n_features)))
+        return self
+
     def train(self, X):
         """
         Method to train the SOM on the input data.
@@ -51,8 +59,8 @@ class SOM:
         if self.sigma0 <= 1:
             raise ValueError(f"sigma0 must be > 1, got {self.sigma0}")
 
-        rng = np.random.default_rng(self.seed)
-        W = rng.random((self.height, self.width, X.shape[1]))
+        self.init_weights(X.shape[1])
+        W = self.weights
         lam = self.n_iter / np.log(self.sigma0)
         rows, cols = np.indices((self.height, self.width))
 

@@ -66,11 +66,29 @@ def _response(status, payload):
 
 def lambda_handler(event, context):
     try:
-        if event.get("rawPath", "").endswith("/train-atlas"):
+        path = event.get("rawPath", "")
+        if path.endswith("/init-atlas"):
+            return _init_atlas(event)
+        if path.endswith("/train-atlas"):
             return _train_atlas(event)
+        if path.endswith("/init"):
+            return _init(event)
         return _train(event)
     except Exception as e:
         return _response(400, {"message": str(e)})
+
+
+def _put_png(png, filename, extra):
+    run_id = str(uuid.uuid4())
+    key = f"runs/{run_id}/{filename}"
+    s3.put_object(Bucket=BUCKET, Key=key, Body=png, ContentType="image/png")
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": BUCKET, "Key": key},
+        ExpiresIn=900,
+    )
+    extra = {"run_id": run_id, "image_url": url, **extra}
+    return _response(200, extra)
 
 
 def _train(event):
@@ -90,23 +108,12 @@ def _train(event):
     som = SOM(width, height, n_iter, lr0=lr0, seed=seed, radius_mask=radius_mask)
     som.train(X)
     png = weights_to_png_bytes(som.weights)
-    qe = som.quantization_error(X)
 
-    run_id = str(uuid.uuid4())
-    key = f"runs/{run_id}/som.png"
-    s3.put_object(Bucket=BUCKET, Key=key, Body=png, ContentType="image/png")
-    url = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": BUCKET, "Key": key},
-        ExpiresIn=900,
-    )
-
-    return _response(
-        200,
+    return _put_png(
+        png,
+        "som.png",
         {
-            "run_id": run_id,
-            "quantization_error": qe,
-            "image_url": url,
+            "quantization_error": som.quantization_error(X),
             "width": width,
             "height": height,
             "n_iter": n_iter,
@@ -115,6 +122,23 @@ def _train(event):
             "seed": seed,
             "radius_mask": radius_mask,
         },
+    )
+
+
+def _init(event):
+    body = _json_body(event)
+    width = _clamp_int(body, "width", 10)
+    height = _clamp_int(body, "height", 10)
+    seed = int(body.get("seed", 7))
+
+    som = SOM(width, height, n_iter=2, seed=seed)
+    som.init_weights(3)
+    png = weights_to_png_bytes(som.weights)
+
+    return _put_png(
+        png,
+        "som-init.png",
+        {"width": width, "height": height, "seed": seed},
     )
 
 
@@ -144,24 +168,41 @@ def _train_atlas(event):
     som = SOM(width, height, n_iter, seed=seed).train(X)
     png = atlas_to_png_bytes(som.weights, X, data["thumbs"])
 
-    run_id = str(uuid.uuid4())
-    key = f"runs/{run_id}/atlas.png"
-    s3.put_object(Bucket=BUCKET, Key=key, Body=png, ContentType="image/png")
-    url = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": BUCKET, "Key": key},
-        ExpiresIn=900,
-    )
-
-    return _response(
-        200,
+    return _put_png(
+        png,
+        "atlas.png",
         {
-            "run_id": run_id,
             "quantization_error": som.quantization_error(X),
-            "image_url": url,
             "width": width,
             "height": height,
             "n_iter": n_iter,
+            "n_images": len(X),
+            "embedding_dim": X.shape[1],
+            "encoder": data["encoder"],
+            "classes": data["class_names"],
+        },
+    )
+
+
+def _init_atlas(event):
+    body = _json_body(event)
+    width = _clamp_int(body, "width", 16, ATLAS_LIMITS)
+    height = _clamp_int(body, "height", 16, ATLAS_LIMITS)
+    seed = int(body.get("seed", 7))
+
+    data = _load_atlas()
+    X = data["X"]
+    som = SOM(width, height, n_iter=2, seed=seed)
+    som.init_weights(X.shape[1])
+    png = atlas_to_png_bytes(som.weights, X, data["thumbs"])
+
+    return _put_png(
+        png,
+        "atlas-init.png",
+        {
+            "width": width,
+            "height": height,
+            "seed": seed,
             "n_images": len(X),
             "embedding_dim": X.shape[1],
             "encoder": data["encoder"],
