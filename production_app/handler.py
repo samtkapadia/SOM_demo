@@ -212,7 +212,7 @@ def _train_atlas(event):
     """
     Train photo atlas -> right-hand mosaic.
 
-    Fixed 250 x 128-d embeddings; only grid size / iterations / seed come from the form.
+    Fixed 250 x 128-d embeddings; grid size / iterations / seed / radius_mask come from the form.
     Each cell shows the nearest training thumbnail (repeats are expected).
     """
     body = _json_body(event)
@@ -220,10 +220,11 @@ def _train_atlas(event):
     height = _clamp_int(body, "height", 16, ATLAS_LIMITS)
     n_iter = _clamp_int(body, "n_iter", 100, ATLAS_LIMITS)
     seed = int(body.get("seed", 7))
+    radius_mask = bool(body.get("radius_mask", False))
 
     data = _load_atlas()
     X = data["X"]
-    som = SOM(width, height, n_iter, seed=seed).train(X)
+    som = SOM(width, height, n_iter, seed=seed, radius_mask=radius_mask).train(X)
     png = atlas_to_png_bytes(som.weights, X, data["thumbs"])
 
     return _put_png(
@@ -238,6 +239,7 @@ def _train_atlas(event):
             "embedding_dim": X.shape[1],
             "encoder": data["encoder"],
             "classes": data["class_names"],
+            "radius_mask": radius_mask,
         },
     )
 

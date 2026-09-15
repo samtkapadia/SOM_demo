@@ -77,7 +77,11 @@
         <label>Learning rate <input id="lr0" type="number" value="0.1" min="0.0001" max="1" step="0.01"></label>
         <label>Seed <input id="seed" type="number" value="7"></label>
       </div>
-      <label><input id="radius_mask" type="checkbox"> Radius mask</label>
+      <label>
+        <input id="radius_mask" type="checkbox">
+        Only update cells inside the neighbourhood radius
+      </label>
+      <p class="muted">Off (default): every cell still gets a small Gaussian pull. On: cells farther than the current radius are left unchanged — sharper patches, less bleed.</p>
       <button type="button" id="rgbRandomizeBtn">Randomize</button>
       <button type="button" id="trainBtn">Train</button>
       <div class="compare">
@@ -107,6 +111,11 @@
         <label>Iterations <input id="atlasIterations" type="number" value="100" min="25" max="150"></label>
         <label>Seed <input id="atlasSeed" type="number" value="7"></label>
       </div>
+      <label>
+        <input id="atlas_radius_mask" type="checkbox">
+        Only update cells inside the neighbourhood radius
+      </label>
+      <p class="muted">Off (default): every cell still gets a small Gaussian pull. On: cells farther than the current radius are left unchanged — sharper patches, less bleed.</p>
       <button type="button" id="atlasRandomizeBtn">Randomize</button>
       <button type="button" id="atlasTrainBtn">Train photo atlas</button>
       <div class="compare">
@@ -198,6 +207,7 @@
         height: Number(document.getElementById("atlasHeight").value),
         n_iter: Number(document.getElementById("atlasIterations").value),
         seed: Number(document.getElementById("atlasSeed").value),
+        radius_mask: document.getElementById("atlas_radius_mask").checked,
       };
     }
 
